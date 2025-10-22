@@ -19,8 +19,8 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 # Configuration
-SCRAPER_INTERVAL = 1  # minutes - how often to scrape per account
-QUEUE_CHECK_INTERVAL = 1  # minutes - how often to check for accounts ready to scrape
+SCRAPER_INTERVAL = 5  # minutes - how often to scrape per account
+QUEUE_CHECK_INTERVAL = 2  # minutes - how often to check for accounts ready to scrape
 MAX_CONCURRENT_SCRAPERS = 10  # max number of accounts to scrape concurrently
 
 app = Flask(__name__)
