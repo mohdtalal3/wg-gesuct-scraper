@@ -3,6 +3,10 @@ import json
 import os
 from datetime import datetime
 from supabase import Client
+from logger_config import setup_logger
+
+# Setup logger
+logger = setup_logger('wg_scraper')
 
 
 class WgGesuchtClient:
@@ -31,7 +35,7 @@ class WgGesuchtClient:
                 'http': proxy_url,
                 'https': proxy_url
             }
-            print(f"🔒 Proxy configured: {proxy_url.split('@')[-1] if '@' in proxy_url else proxy_url}")
+            logger.info(f"🔒 Proxy configured: {proxy_url.split('@')[-1] if '@' in proxy_url else proxy_url}")
 
     # ---------------------------------------------------
     # Generic API request
@@ -57,10 +61,10 @@ class WgGesuchtClient:
             return response
         
         if response.status_code == 401:
-            print(f"❌ Session expired (401). Re-login required.")
+            logger.error(f"❌ Session expired (401). Re-login required.")
             return None
 
-        print(f"❌ Request failed: {response.status_code} — {response.text}")
+        logger.error(f"❌ Request failed: {response.status_code} — {response.text}")
         return None
 
     # ---------------------------------------------------
@@ -77,7 +81,7 @@ class WgGesuchtClient:
 
         r = self.request('POST', 'sessions', None, json.dumps(payload))
         if not r:
-            print("❌ Login failed.")
+            logger.error("❌ Login failed.")
             return False
 
         body = r.json()['detail']
@@ -85,7 +89,7 @@ class WgGesuchtClient:
         self.refreshToken = body['refresh_token']
         self.userId = body['user_id']
         self.devRefNo = body['dev_ref_no']
-        print("✅ Logged in successfully.")
+        logger.info("✅ Logged in successfully.")
         return True
 
     # ---------------------------------------------------
@@ -94,7 +98,7 @@ class WgGesuchtClient:
     def refresh_session(self):
         """Refresh the access token using refresh token."""
         if not all([self.userId, self.refreshToken, self.devRefNo]):
-            print("⚠️ Missing session data, cannot refresh token.")
+            logger.warning("⚠️ Missing session data, cannot refresh token.")
             return False
 
         payload = {
@@ -122,14 +126,14 @@ class WgGesuchtClient:
         response = requests.put(url, headers=headers, data=json.dumps(payload), proxies=self.proxies)
         
         if response.status_code not in range(200, 300):
-            print(f"❌ Token refresh failed: {response.status_code} — {response.text}")
+            logger.error(f"❌ Token refresh failed: {response.status_code} — {response.text}")
             return False
 
         body = response.json()['detail']
         self.accessToken = body['access_token']
         self.refreshToken = body['refresh_token']
         self.devRefNo = body['dev_ref_no']
-        print("🔄 Token refreshed successfully.")
+        logger.info("🔄 Token refreshed successfully.")
         return True
 
     # ---------------------------------------------------
@@ -158,7 +162,7 @@ class WgGesuchtClient:
     def my_profile(self):
         """Get logged-in user's profile."""
         if not self.userId:
-            print("⚠️ Not logged in.")
+            logger.warning("⚠️ Not logged in.")
             return None
 
         endpoint = f'public/users/{self.userId}'
@@ -199,7 +203,7 @@ class WgGesuchtClient:
         if response.status_code in range(200, 300):
             return response.json()
         else:
-            print(f"❌ Request failed: {response.status_code} — {response.text}")
+            logger.error(f"❌ Request failed: {response.status_code} — {response.text}")
             return None
 
     # ---------------------------------------------------
@@ -221,16 +225,16 @@ class WgGesuchtClient:
 
         r = self.request('POST', 'conversations', None, json.dumps(payload))
         if not r:
-            print("⚠️ Failed to contact offer.")
+            logger.warning("⚠️ Failed to contact offer.")
             return False
 
         try:
             data = r.json()
             messages = data.get('messages', [])
-            print(f"✅ Message sent to offer {offerId} successfully!")
+            logger.info(f"✅ Message sent to offer {offerId} successfully!")
             return messages
         except Exception as e:
-            print(f"⚠️ Unexpected response: {e}")
+            logger.warning(f"⚠️ Unexpected response: {e}")
             return False
 
 
@@ -263,7 +267,7 @@ def ensure_valid_session(client: WgGesuchtClient, account: dict, supabase: Clien
     
     # No session at all - skip (session must be created from frontend)
     if not session_details:
-        print(f"⚠️ [{account['email']}] No session found. Session must be created from frontend first.")
+        logger.warning(f"⚠️ [{account['email']}] No session found. Session must be created from frontend first.")
         return False
     
     # Load existing session
@@ -277,16 +281,16 @@ def ensure_valid_session(client: WgGesuchtClient, account: dict, supabase: Clien
             session_created = datetime.fromisoformat(session_created_str)
             age_minutes = (datetime.now() - session_created).total_seconds() / 60
             
-            print(f"🕐 [{account['email']}] Session age: {age_minutes:.1f} minutes")
+            logger.info(f"🕐 [{account['email']}] Session age: {age_minutes:.1f} minutes")
             
             # If session is older than 40 minutes, refresh it proactively
             if age_minutes > 40:
-                print(f"⚠️ [{account['email']}] Session older than 40 minutes. Refreshing token...")
+                logger.warning(f"⚠️ [{account['email']}] Session older than 40 minutes. Refreshing token...")
                 
                 if not client.refresh_session():
-                    print(f"❌ [{account['email']}] Token refresh failed. Trying full re-login...")
+                    logger.error(f"❌ [{account['email']}] Token refresh failed. Trying full re-login...")
                     if not client.login(account['email'], account['password']):
-                        print(f"❌ [{account['email']}] Re-login also failed.")
+                        logger.error(f"❌ [{account['email']}] Re-login also failed.")
                         return False
                 
                 # Update session in database
@@ -294,37 +298,37 @@ def ensure_valid_session(client: WgGesuchtClient, account: dict, supabase: Clien
                 supabase.table('accounts').update({
                     'session_details': new_session
                 }).eq('id', account['id']).execute()
-                print(f"✅ [{account['email']}] Session refreshed and updated.")
+                logger.info(f"✅ [{account['email']}] Session refreshed and updated.")
                 return True
             else:
-                print(f"✅ [{account['email']}] Session is fresh (expires in ~{60 - age_minutes:.0f} minutes).")
+                logger.info(f"✅ [{account['email']}] Session is fresh (expires in ~{60 - age_minutes:.0f} minutes).")
                 return True
                 
         except Exception as e:
-            print(f"⚠️ [{account['email']}] Could not parse session timestamp: {e}")
+            logger.warning(f"⚠️ [{account['email']}] Could not parse session timestamp: {e}")
     else:
-        print(f"⚠️ [{account['email']}] No session timestamp found.")
+        logger.warning(f"⚠️ [{account['email']}] No session timestamp found.")
     
     # Validate session with a simple profile check (as fallback)
-    print(f"🔄 [{account['email']}] Validating existing session...")
+    logger.info(f"🔄 [{account['email']}] Validating existing session...")
     if client.my_profile():
-        print(f"✅ [{account['email']}] Existing session is valid.")
+        logger.info(f"✅ [{account['email']}] Existing session is valid.")
         return True
     
     # Session invalid - try refresh token first, then full login
-    print(f"⚠️ [{account['email']}] Session invalid. Attempting token refresh...")
+    logger.warning(f"⚠️ [{account['email']}] Session invalid. Attempting token refresh...")
     if client.refresh_session():
         new_session = client.get_session_dict()
         supabase.table('accounts').update({
             'session_details': new_session
         }).eq('id', account['id']).execute()
-        print(f"✅ [{account['email']}] Token refreshed and session updated.")
+        logger.info(f"✅ [{account['email']}] Token refreshed and session updated.")
         return True
     
     # Refresh failed, try full re-login
-    print(f"⚠️ [{account['email']}] Token refresh failed. Re-logging in...")
+    logger.warning(f"⚠️ [{account['email']}] Token refresh failed. Re-logging in...")
     if not client.login(account['email'], account['password']):
-        print(f"❌ [{account['email']}] Re-login failed.")
+        logger.error(f"❌ [{account['email']}] Re-login failed.")
         return False
     
     # Update session in database
@@ -332,7 +336,7 @@ def ensure_valid_session(client: WgGesuchtClient, account: dict, supabase: Clien
     supabase.table('accounts').update({
         'session_details': new_session
     }).eq('id', account['id']).execute()
-    print(f"✅ [{account['email']}] Re-logged in and session updated.")
+    logger.info(f"✅ [{account['email']}] Re-logged in and session updated.")
     return True
 
 
@@ -353,9 +357,9 @@ def run_scraper_for_account(account: dict, supabase: Client):
     
     Returns: (success: bool, new_offers_count: int)
     """
-    print(f"\n{'='*60}")
-    print(f"🏃 Running scraper for: {account['email']}")
-    print(f"{'='*60}")
+    logger.info(f"\n{'='*60}")
+    logger.info(f"🏃 Running scraper for: {account['email']}")
+    logger.info(f"{'='*60}")
     
     # Get configuration from account
     config = account.get('configuration', {})
@@ -369,26 +373,26 @@ def run_scraper_for_account(account: dict, supabase: Client):
         proxy_base = os.getenv('PROXY_URL')
         if proxy_base:
             proxy_url = f"{proxy_base}{proxy_port}"
-            print(f"🔒 [{account['email']}] Using proxy port: {proxy_port}")
+            logger.info(f"🔒 [{account['email']}] Using proxy port: {proxy_port}")
         else:
-            print(f"⚠️ [{account['email']}] PROXY_URL not found in environment, running without proxy")
+            logger.warning(f"⚠️ [{account['email']}] PROXY_URL not found in environment, running without proxy")
     else:
-        print(f"ℹ️ [{account['email']}] No proxy port configured, running without proxy")
+        logger.info(f"ℹ️ [{account['email']}] No proxy port configured, running without proxy")
     
     # Initialize client with proxy
     client = WgGesuchtClient(proxy_url=proxy_url)
     
-    print(f"🔍 Fetching offers from city_id={city_id}, categories={categories}...")
+    logger.info(f"🔍 Fetching offers from city_id={city_id}, categories={categories}...")
     
     # Fetch offers (public API, no auth)
     raw_response = client.offers_all(cityId=city_id, categories=categories)
     if not raw_response:
-        print(f"❌ [{account['email']}] No offers found or request failed.")
+        logger.error(f"❌ [{account['email']}] No offers found or request failed.")
         return False, 0
     
     # Extract offers array from response
     offers = raw_response.get('_embedded', {}).get('offers', [])
-    print(f"✅ [{account['email']}] Fetched {len(offers)} offers.")
+    logger.info(f"✅ [{account['email']}] Fetched {len(offers)} offers.")
     
     # Load existing listing_data to get previous last_latest
     existing_listing_data = account.get('listing_data', {}) or {}
@@ -421,12 +425,12 @@ def run_scraper_for_account(account: dict, supabase: Client):
             'last_updated_at': datetime.now().isoformat()
         }).eq('id', account['id']).execute()
         
-        print(f"🆕 [{account['email']}] Initialized listing_data with last_latest: {latest_str}")
-        print(f"    Next run will save only newer listings.")
+        logger.info(f"🆕 [{account['email']}] Initialized listing_data with last_latest: {latest_str}")
+        logger.info(f"    Next run will save only newer listings.")
         return True, 0
     
     # Subsequent runs: filter only listings newer than last_latest
-    print(f"📌 [{account['email']}] Previous last_latest: {last_latest_str}")
+    logger.info(f"📌 [{account['email']}] Previous last_latest: {last_latest_str}")
     
     new_offers = []
     for o in offers:
@@ -447,7 +451,7 @@ def run_scraper_for_account(account: dict, supabase: Client):
             new_offers.append(formatted)
     
     if not new_offers:
-        print(f"✅ [{account['email']}] No new listings found — everything is up to date.")
+        logger.info(f"✅ [{account['email']}] No new listings found — everything is up to date.")
         # Still update last_updated_at
         supabase.table('accounts').update({
             'last_updated_at': datetime.now().isoformat()
@@ -479,11 +483,11 @@ def run_scraper_for_account(account: dict, supabase: Client):
             'last_updated_at': datetime.now().isoformat()
         }).eq('id', account['id']).execute()
         
-        print(f"🆕 [{account['email']}] Added {len(new_offers)} new offers.")
-        print(f"📅 [{account['email']}] Updated last_latest → {newest_str}")
+        logger.info(f"🆕 [{account['email']}] Added {len(new_offers)} new offers.")
+        logger.info(f"📅 [{account['email']}] Updated last_latest → {newest_str}")
         
     except Exception as e:
-        print(f"❌ [{account['email']}] Error saving to Supabase: {e}")
+        logger.error(f"❌ [{account['email']}] Error saving to Supabase: {e}")
         return False, 0
     
     # ===================================================
@@ -493,14 +497,14 @@ def run_scraper_for_account(account: dict, supabase: Client):
     contact_message = account.get('message')
     
     if not contact_message or not contact_message.strip():
-        print(f"⚠️ [{account['email']}] No message found. Skipping auto-contact.")
+        logger.warning(f"⚠️ [{account['email']}] No message found. Skipping auto-contact.")
         return True, len(new_offers)
     
     # Ensure valid session (auto-login if expired)
-    print(f"💬 [{account['email']}] Auto-contacting {len(new_offers)} new offers...")
+    logger.info(f"💬 [{account['email']}] Auto-contacting {len(new_offers)} new offers...")
     
     if not ensure_valid_session(client, account, supabase):
-        print(f"❌ [{account['email']}] Could not establish valid session. Skipping auto-contact.")
+        logger.error(f"❌ [{account['email']}] Could not establish valid session. Skipping auto-contact.")
         return True, len(new_offers)
     
     # Contact each offer
@@ -511,19 +515,19 @@ def run_scraper_for_account(account: dict, supabase: Client):
         offer_id = offer.get('offer_id')
         offer_title = offer.get('title', 'Unknown')
         
-        print(f"📤 [{account['email']}] Contacting offer {offer_id}: {offer_title[:40]}...")
+        logger.info(f"📤 [{account['email']}] Contacting offer {offer_id}: {offer_title[:40]}...")
         
         result = client.contact_offer(offer_id, contact_message)
         
         if result:
             contacted_count += 1
-            print(f"   ✅ Successfully contacted!")
+            logger.info(f"   ✅ Successfully contacted!")
         else:
             failed_count += 1
-            print(f"   ❌ Failed to contact.")
+            logger.error(f"   ❌ Failed to contact.")
     
-    print(f"📊 [{account['email']}] Contact Summary: ✅ {contacted_count} | ❌ {failed_count}")
-    print(f"✅ [{account['email']}] Scraper completed successfully!")
+    logger.info(f"📊 [{account['email']}] Contact Summary: ✅ {contacted_count} | ❌ {failed_count}")
+    logger.info(f"✅ [{account['email']}] Scraper completed successfully!")
     
     return True, len(new_offers)
 

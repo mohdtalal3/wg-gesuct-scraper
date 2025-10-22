@@ -2,11 +2,15 @@ import os
 import time
 import threading
 from datetime import datetime, timedelta
-from flask import Flask, jsonify
+from flask import Flask, jsonify, send_file
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from wg_scraper import run_scraper_for_account
+from logger_config import setup_logger, LOGS_DIR, LOG_FILE
+
+# Setup logger
+logger = setup_logger('app')
 
 # Load environment variables
 load_dotenv()
@@ -73,19 +77,19 @@ def get_accounts_ready_to_scrape(supabase: Client):
                 
                 if time_since_update >= SCRAPER_INTERVAL:
                     ready_accounts.append(account)
-                    print(f"✅ Account {account['email']} ready (last updated {time_since_update:.1f} min ago)")
+                    logger.info(f"✅ Account {account['email']} ready (last updated {time_since_update:.1f} min ago)")
                 else:
-                    print(f"⏳ Account {account['email']} not ready (last updated {time_since_update:.1f} min ago, needs {SCRAPER_INTERVAL - time_since_update:.1f} more min)")
+                    logger.info(f"⏳ Account {account['email']} not ready (last updated {time_since_update:.1f} min ago, needs {SCRAPER_INTERVAL - time_since_update:.1f} more min)")
             
             except Exception as e:
-                print(f"⚠️ Error parsing timestamp for {account['email']}: {e}")
+                logger.warning(f"⚠️ Error parsing timestamp for {account['email']}: {e}")
                 # If can't parse, consider it ready
                 ready_accounts.append(account)
         
         return ready_accounts
     
     except Exception as e:
-        print(f"❌ Error fetching accounts from Supabase: {e}")
+        logger.error(f"❌ Error fetching accounts from Supabase: {e}")
         return []
 
 
@@ -100,7 +104,7 @@ def process_account(account: dict):
         success, new_offers_count = run_scraper_for_account(account, supabase)
         return (account['email'], success, new_offers_count)
     except Exception as e:
-        print(f"❌ Error processing account {account['email']}: {e}")
+        logger.error(f"❌ Error processing account {account['email']}: {e}")
         return (account['email'], False, 0)
 
 
@@ -110,25 +114,25 @@ def scraper_queue_thread():
     Processes up to MAX_CONCURRENT_SCRAPERS accounts concurrently.
     Uses global supabase client (thread-safe).
     """
-    print(f"🚀 Scraper queue thread started!")
-    print(f"   - Checking every {QUEUE_CHECK_INTERVAL} minutes")
-    print(f"   - Scraping accounts every {SCRAPER_INTERVAL} minutes")
-    print(f"   - Max concurrent scrapers: {MAX_CONCURRENT_SCRAPERS}")
+    logger.info(f"🚀 Scraper queue thread started!")
+    logger.info(f"   - Checking every {QUEUE_CHECK_INTERVAL} minutes")
+    logger.info(f"   - Scraping accounts every {SCRAPER_INTERVAL} minutes")
+    logger.info(f"   - Max concurrent scrapers: {MAX_CONCURRENT_SCRAPERS}")
     
     while True:
         try:
-            print(f"\n{'='*60}")
-            print(f"🔍 Checking for accounts ready to scrape...")
-            print(f"{'='*60}")
+            logger.info(f"\n{'='*60}")
+            logger.info(f"🔍 Checking for accounts ready to scrape...")
+            logger.info(f"{'='*60}")
             
             scraper_stats['last_check'] = datetime.now().isoformat()
             
             ready_accounts = get_accounts_ready_to_scrape(supabase)
             
             if not ready_accounts:
-                print("✅ No accounts ready to scrape at this time.")
+                logger.info("✅ No accounts ready to scrape at this time.")
             else:
-                print(f"📋 Found {len(ready_accounts)} accounts ready to scrape")
+                logger.info(f"📋 Found {len(ready_accounts)} accounts ready to scrape")
                 
                 # Process accounts concurrently using ThreadPoolExecutor
                 with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_SCRAPERS) as executor:
@@ -157,7 +161,7 @@ def scraper_queue_thread():
                                     'new_offers': new_offers_count,
                                     'status': 'success'
                                 })
-                                print(f"✅ Account {email} processed successfully ({new_offers_count} new offers)")
+                                logger.info(f"✅ Account {email} processed successfully ({new_offers_count} new offers)")
                             else:
                                 scraper_stats['failed_runs'] += 1
                                 scraper_stats['accounts_processed'].append({
@@ -166,11 +170,11 @@ def scraper_queue_thread():
                                     'new_offers': 0,
                                     'status': 'failed'
                                 })
-                                print(f"❌ Account {email} processing failed")
+                                logger.error(f"❌ Account {email} processing failed")
                         
                         except Exception as e:
                             scraper_stats['failed_runs'] += 1
-                            print(f"❌ Exception processing account {account['email']}: {e}")
+                            logger.error(f"❌ Exception processing account {account['email']}: {e}")
                     
                     scraper_stats['currently_running'] = 0
                 
@@ -178,17 +182,17 @@ def scraper_queue_thread():
                 if len(scraper_stats['accounts_processed']) > 100:
                     scraper_stats['accounts_processed'] = scraper_stats['accounts_processed'][-100:]
                 
-                print(f"\n📊 Batch Summary:")
-                print(f"   Total runs: {scraper_stats['total_runs']}")
-                print(f"   Successful: {scraper_stats['successful_runs']}")
-                print(f"   Failed: {scraper_stats['failed_runs']}")
-                print(f"   Total new offers found: {scraper_stats['total_new_offers']}")
+                logger.info(f"\n📊 Batch Summary:")
+                logger.info(f"   Total runs: {scraper_stats['total_runs']}")
+                logger.info(f"   Successful: {scraper_stats['successful_runs']}")
+                logger.info(f"   Failed: {scraper_stats['failed_runs']}")
+                logger.info(f"   Total new offers found: {scraper_stats['total_new_offers']}")
         
         except Exception as e:
-            print(f"❌ Error in scraper queue thread: {e}")
+            logger.error(f"❌ Error in scraper queue thread: {e}")
         
         # Wait for next check interval
-        print(f"\n⏳ Waiting {QUEUE_CHECK_INTERVAL} minutes until next check...")
+        logger.info(f"\n⏳ Waiting {QUEUE_CHECK_INTERVAL} minutes until next check...")
         time.sleep(QUEUE_CHECK_INTERVAL * 60)
 
 
@@ -283,7 +287,7 @@ def trigger_scrape():
                     try:
                         future.result()
                     except Exception as e:
-                        print(f"Error in async scrape: {e}")
+                        logger.error(f"Error in async scrape: {e}")
         
         thread = threading.Thread(target=async_scrape)
         thread.daemon = True
@@ -302,6 +306,87 @@ def trigger_scrape():
         }), 500
 
 
+@app.route('/logs')
+def list_logs():
+    """List all available log files."""
+    try:
+        if not os.path.exists(LOGS_DIR):
+            return jsonify({
+                'success': True,
+                'logs': [],
+                'message': 'No logs directory found yet'
+            })
+        
+        log_files = []
+        for filename in sorted(os.listdir(LOGS_DIR), reverse=True):
+            if filename.startswith('scraper.log'):
+                filepath = os.path.join(LOGS_DIR, filename)
+                file_stats = os.stat(filepath)
+                log_files.append({
+                    'filename': filename,
+                    'size_bytes': file_stats.st_size,
+                    'size_mb': round(file_stats.st_size / (1024 * 1024), 2),
+                    'modified': datetime.fromtimestamp(file_stats.st_mtime).isoformat(),
+                    'download_url': f'/logs/download/{filename}'
+                })
+        
+        return jsonify({
+            'success': True,
+            'count': len(log_files),
+            'logs': log_files
+        })
+    
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/logs/download')
+@app.route('/logs/download/<filename>')
+def download_log(filename=None):
+    """Download a log file. Default: current log file."""
+    try:
+        if not os.path.exists(LOGS_DIR):
+            return jsonify({
+                'success': False,
+                'error': 'No logs directory found'
+            }), 404
+        
+        # If no filename provided, download the current log
+        if filename is None:
+            filename = 'scraper.log'
+        
+        # Security: Only allow downloading scraper.log files
+        if not filename.startswith('scraper.log'):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid log file name'
+            }), 400
+        
+        filepath = os.path.join(LOGS_DIR, filename)
+        
+        if not os.path.exists(filepath):
+            return jsonify({
+                'success': False,
+                'error': f'Log file {filename} not found'
+            }), 404
+        
+        return send_file(
+            filepath,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='text/plain'
+        )
+    
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 # ===================================================
 # MAIN
 # ===================================================
@@ -311,17 +396,22 @@ if __name__ == '__main__':
     scraper_thread = threading.Thread(target=scraper_queue_thread, daemon=True)
     scraper_thread.start()
     
-    print(f"\n{'='*60}")
-    print("🚀 WG-GESUCHT SCRAPER BACKEND STARTED")
-    print(f"{'='*60}")
-    print(f"🌐 Flask server starting on http://0.0.0.0:5000")
-    print(f"📋 Available endpoints:")
-    print(f"   GET  /           - Health check")
-    print(f"   GET  /stats      - Scraper statistics")
-    print(f"   GET  /accounts   - List all accounts")
-    print(f"   GET  /accounts/ready - List accounts ready to scrape")
-    print(f"   POST /scrape/trigger - Manually trigger scrape")
-    print(f"{'='*60}\n")
+    logger.info(f"\n{'='*60}")
+    logger.info("🚀 WG-GESUCHT SCRAPER BACKEND STARTED")
+    logger.info(f"{'='*60}")
+    logger.info(f"🌐 Flask server starting on http://0.0.0.0:5001")
+    logger.info(f"📋 Available endpoints:")
+    logger.info(f"   GET  /                    - Health check")
+    logger.info(f"   GET  /stats               - Scraper statistics")
+    logger.info(f"   GET  /accounts            - List all accounts")
+    logger.info(f"   GET  /accounts/ready      - List accounts ready to scrape")
+    logger.info(f"   POST /scrape/trigger      - Manually trigger scrape")
+    logger.info(f"   GET  /logs                - List all log files")
+    logger.info(f"   GET  /logs/download       - Download current log file")
+    logger.info(f"   GET  /logs/download/<file> - Download specific log file")
+    logger.info(f"{'='*60}")
+    logger.info(f"📥 Quick Download: http://localhost:5001/logs/download")
+    logger.info(f"{'='*60}\n")
     
     # Start Flask app
     app.run(host='0.0.0.0', port=5001, debug=False, threaded=True)
