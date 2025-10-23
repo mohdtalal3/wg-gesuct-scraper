@@ -526,6 +526,23 @@ def run_scraper_for_account(account: dict, supabase: Client):
             failed_count += 1
             logger.error(f"   ❌ Failed to contact.")
     
+    # Update the contacted_ads counter in configuration
+    if contacted_count > 0:
+        try:
+            config = account.get('configuration', {})
+            current_contacted = config.get('contacted_ads', 0)
+            new_total = current_contacted + contacted_count
+            
+            config['contacted_ads'] = new_total
+            
+            supabase.table('accounts').update({
+                'configuration': config
+            }).eq('id', account['id']).execute()
+            
+            logger.info(f"📈 [{account['email']}] Updated contacted_ads: {current_contacted} → {new_total}")
+        except Exception as e:
+            logger.error(f"❌ [{account['email']}] Error updating contacted_ads counter: {e}")
+    
     logger.info(f"📊 [{account['email']}] Contact Summary: ✅ {contacted_count} | ❌ {failed_count}")
     logger.info(f"✅ [{account['email']}] Scraper completed successfully!")
     
