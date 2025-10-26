@@ -172,14 +172,28 @@ class WgGesuchtClient:
         return r.json()
 
     # ---------------------------------------------------
-    # Fetch all offers (NO LOGIN REQUIRED - PUBLIC DATA)
+    # Fetch all offers (LOGIN REQUIRED - Uses authenticated session)
     # ---------------------------------------------------
-    def offers_all(self, cityId: str, categories: list = None, page: str = '1'):
-        """Fetch offers from WG-Gesucht (public API, no auth needed)."""
-        url = self.API_URL.format('asset/offers/')
+    def offers_all(self, cityId: str, categories: list = None, page: str = '1', exclude_contacted: bool = True,
+                   max_rent: int = None, min_size: int = None):
+        """
+        Fetch offers from WG-Gesucht using authenticated session.
+        
+        Args:
+            cityId: City ID to search in
+            categories: List of categories to include
+            page: Page number
+            exclude_contacted: If True, excludes already contacted ads (requires login)
+            max_rent: Maximum rent in euros (optional, max: 9999)
+            min_size: Minimum size in square meters (optional, max: 999)
+        
+        Returns:
+            JSON response with offers
+        """
         if categories is None:
             categories = [0, 1, 2, 3]
         categories_str = ','.join(map(str, categories))
+        
         params = {
             'ad_type': '0',
             'categories': categories_str,
@@ -187,24 +201,30 @@ class WgGesuchtClient:
             'city_id': cityId,
             'noDeact': '1',
             'img': '1',
-            'limit': '100',
+            'limit': '50',
             'page': page
         }
         
-        headers = {
-            'X-App-Version': self.APP_VERSION,
-            'User-Agent': self.USER_AGENT,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'X-Client-Id': self.CLIENT_ID,
-        }
+        # Add filter to exclude already contacted ads
+        if exclude_contacted:
+            params['exContAds'] = '1'
         
-        response = requests.get(url, headers=headers, params=params, proxies=self.proxies)
-        if response.status_code in range(200, 300):
-            return response.json()
-        else:
-            logger.error(f"❌ Request failed: {response.status_code} — {response.text}")
+        # Add optional filters
+        if max_rent is not None and max_rent > 0:
+            params['rMax'] = str(min(max_rent, 9999))  # Cap at 9999
+        
+        if min_size is not None and min_size > 0:
+            params['sMin'] = str(min(min_size, 999))  # Cap at 999
+        
+        # Use authenticated request (uses self.request which includes auth headers)
+        endpoint = 'asset/offers/'
+        r = self.request('GET', endpoint, params=params)
+        
+        if not r:
+            logger.error(f"❌ Failed to fetch offers. Make sure you're logged in.")
             return None
+        
+        return r.json()
 
     # ---------------------------------------------------
     # Contact an Offer
@@ -348,7 +368,7 @@ def run_scraper_for_account(account: dict, supabase: Client):
     """
     Run scraper for a single account from Supabase.
     
-    - Scrapes new listings from API (no auth needed)
+    - Logs in and scrapes listings (excludes already contacted ads via exContAds filter)
     - Filters ONLY offers newer than 'last_latest'
     - FULLY REPLACES listing_data with new filtered offers
     - Updates 'last_latest' to newest timestamp
@@ -366,6 +386,8 @@ def run_scraper_for_account(account: dict, supabase: Client):
     city_id = config.get('city_id')
     categories = config.get('categories')
     proxy_port = config.get('proxy_port')
+    max_rent = config.get('max_rent')  # Optional
+    min_size = config.get('min_size')  # Optional
     
     # Build proxy URL if proxy_port is provided
     proxy_url = None
@@ -382,10 +404,27 @@ def run_scraper_for_account(account: dict, supabase: Client):
     # Initialize client with proxy
     client = WgGesuchtClient(proxy_url=proxy_url)
     
-    logger.info(f"🔍 Fetching offers from city_id={city_id}, categories={categories}...")
+    # Ensure valid session before scraping (required for exContAds filter)
+    logger.info(f"🔐 [{account['email']}] Logging in to access filtered listings...")
+    if not ensure_valid_session(client, account, supabase):
+        logger.error(f"❌ [{account['email']}] Could not establish valid session. Cannot fetch listings.")
+        return False, 0
     
-    # Fetch offers (public API, no auth)
-    raw_response = client.offers_all(cityId=city_id, categories=categories)
+    logger.info(f"🔍 [{account['email']}] Fetching offers from city_id={city_id}, categories={categories}...")
+    logger.info(f"🚫 [{account['email']}] Excluding already contacted ads (exContAds=1)")
+    if max_rent:
+        logger.info(f"💰 [{account['email']}] Max rent filter: {max_rent}€")
+    if min_size:
+        logger.info(f"📏 [{account['email']}] Min size filter: {min_size}m²")
+    
+    # Fetch offers (authenticated API with exContAds filter)
+    raw_response = client.offers_all(
+        cityId=city_id, 
+        categories=categories, 
+        exclude_contacted=True,
+        max_rent=max_rent,
+        min_size=min_size
+    )
     if not raw_response:
         logger.error(f"❌ [{account['email']}] No offers found or request failed.")
         return False, 0
