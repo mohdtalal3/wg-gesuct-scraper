@@ -61,10 +61,10 @@ class WgGesuchtClient:
             return response
         
         if response.status_code == 401:
-            logger.error(f"❌ Session expired (401). Re-login required.")
+            logger.error(f"❌ Session expired (401) for endpoint {endpoint}. Re-login required.")
             return None
 
-        logger.error(f"❌ Request failed: {response.status_code} — {response.text}")
+        logger.error(f"❌ Request failed for {method} {endpoint}: {response.status_code} — {response.text[:200]}")
         return None
 
     # ---------------------------------------------------
@@ -245,7 +245,7 @@ class WgGesuchtClient:
 
         r = self.request('POST', 'conversations', None, json.dumps(payload))
         if not r:
-            logger.warning("⚠️ Failed to contact offer.")
+            logger.error(f"❌ Failed to contact offer {offerId} - Request failed (possibly 401/auth issue)")
             return False
 
         try:
@@ -254,7 +254,7 @@ class WgGesuchtClient:
             logger.info(f"✅ Message sent to offer {offerId} successfully!")
             return messages
         except Exception as e:
-            logger.warning(f"⚠️ Unexpected response: {e}")
+            logger.error(f"❌ Failed to contact offer {offerId} - Unexpected response: {e}")
             return False
 
 
@@ -553,17 +553,19 @@ def run_scraper_for_account(account: dict, supabase: Client):
     for offer in new_offers:
         offer_id = offer.get('offer_id')
         offer_title = offer.get('title', 'Unknown')
+        offer_url = offer.get('url', '')
         
         logger.info(f"📤 [{account['email']}] Contacting offer {offer_id}: {offer_title[:40]}...")
+        logger.info(f"   🔗 URL: {offer_url}")
         
         result = client.contact_offer(offer_id, contact_message)
         
         if result:
             contacted_count += 1
-            logger.info(f"   ✅ Successfully contacted!")
+            logger.info(f"   ✅ [{account['email']}] Successfully contacted offer {offer_id}")
         else:
             failed_count += 1
-            logger.error(f"   ❌ Failed to contact.")
+            logger.error(f"   ❌ [{account['email']}] Failed to contact offer {offer_id} - Check logs above for details")
     
     # Update the contacted_ads counter in configuration
     if contacted_count > 0:
