@@ -60,9 +60,9 @@ class WgGesuchtClient:
         if response.status_code in range(200, 300):
             return response
         
-        if response.status_code == 401:
-            logger.error(f"❌ Session expired (401) for endpoint {endpoint}. Re-login required.")
-            return None
+        # if response.status_code == 401:
+        #     logger.error(f"❌ Session expired (401) for endpoint {endpoint}. Re-login required.")
+        #     return None
 
         logger.error(f"❌ Request failed for {method} {endpoint}: {response.status_code} — {response.text[:200]}")
         return None
@@ -247,7 +247,8 @@ class WgGesuchtClient:
         if not r:
             logger.error(f"❌ Failed to contact offer {offerId} - Request failed (possibly 401/auth issue)")
             return False
-        return True 
+
+        return True
 
 
 # ===================================================
@@ -551,6 +552,7 @@ def run_scraper_for_account(account: dict, supabase: Client):
         logger.info(f"   🔗 URL: {offer_url}")
         
         result = client.contact_offer(offer_id, contact_message)
+        
         if result:
             contacted_count += 1
             logger.info(f"   ✅ [{account['email']}] Successfully contacted offer {offer_id}")
