@@ -247,15 +247,7 @@ class WgGesuchtClient:
         if not r:
             logger.error(f"❌ Failed to contact offer {offerId} - Request failed (possibly 401/auth issue)")
             return False
-
-        try:
-            data = r.json()
-            messages = data.get('messages', [])
-            logger.info(f"✅ Message sent to offer {offerId} successfully!")
-            return messages
-        except Exception as e:
-            logger.error(f"❌ Failed to contact offer {offerId} - Unexpected response: {e}")
-            return False
+        return True 
 
 
 # ===================================================
@@ -559,7 +551,6 @@ def run_scraper_for_account(account: dict, supabase: Client):
         logger.info(f"   🔗 URL: {offer_url}")
         
         result = client.contact_offer(offer_id, contact_message)
-        
         if result:
             contacted_count += 1
             logger.info(f"   ✅ [{account['email']}] Successfully contacted offer {offer_id}")
