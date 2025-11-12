@@ -174,14 +174,15 @@ class WgGesuchtClient:
     # ---------------------------------------------------
     # Fetch all offers (LOGIN REQUIRED - Uses authenticated session)
     # ---------------------------------------------------
-    def offers_all(self, cityId: str, categories: list = None, page: str = '1', exclude_contacted: bool = True,
-                   max_rent: int = None, min_size: int = None):
+    def offers_all(self, cityId: str, categories: list = None, rent_types: list = None, page: str = '1', 
+                   exclude_contacted: bool = True, max_rent: int = None, min_size: int = None):
         """
         Fetch offers from WG-Gesucht using authenticated session.
         
         Args:
             cityId: City ID to search in
-            categories: List of categories to include
+            categories: List of categories to include (0=WG, 1=1-Room, 2=Apartment, 3=House)
+            rent_types: List of rent types to include (1=temporary, 2=indefinite, 3=overnight stay)
             page: Page number
             exclude_contacted: If True, excludes already contacted ads (requires login)
             max_rent: Maximum rent in euros (optional, max: 9999)
@@ -192,12 +193,16 @@ class WgGesuchtClient:
         """
         if categories is None:
             categories = [0, 1, 2, 3]
+        if rent_types is None:
+            rent_types = [1, 2]  # Default: temporary and indefinite
+            
         categories_str = ','.join(map(str, categories))
+        rent_types_str = ','.join(map(str, rent_types))
         
         params = {
             'ad_type': '0',
             'categories': categories_str,
-            'rent_types': categories_str,
+            'rent_types': rent_types_str,
             'city_id': cityId,
             'noDeact': '1',
             'img': '1',
@@ -410,10 +415,16 @@ def run_scraper_for_account(account: dict, supabase: Client):
     if min_size:
         logger.info(f"📏 [{account['email']}] Min size filter: {min_size}m²")
     
+    # Get rent_types from configuration (default: [1, 2] = temporary, indefinite)
+    rent_types = config.get('rent_types')
+    if rent_types:
+        logger.info(f"🏠 [{account['email']}] Rent types filter: {rent_types}")
+    
     # Fetch offers (authenticated API with exContAds filter)
     raw_response = client.offers_all(
         cityId=city_id, 
-        categories=categories, 
+        categories=categories,
+        rent_types=rent_types,
         exclude_contacted=True,
         max_rent=max_rent,
         min_size=min_size
