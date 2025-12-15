@@ -70,8 +70,8 @@ class WgGesuchtClient:
     # ---------------------------------------------------
     # Login
     # ---------------------------------------------------
-    def login(self, username: str, password: str):
-        """Login and set session tokens."""
+    def login(self, username: str, password: str, otp: str = None):
+        """Login and set session tokens. Returns True on success, False on failure, 'MFA_REQUIRED' if 2FA needed."""
         payload = {
             'login_email_username': username,
             'login_password': password,
@@ -84,12 +84,46 @@ class WgGesuchtClient:
             logger.error("❌ Login failed.")
             return False
 
-        body = r.json()['detail']
+        response_data = r.json()
+        
+        # Check if 2FA is required (status 202)
+        if response_data.get('status') == 202:
+            logger.error("🔐 Two-Factor Authentication required.")
+            return 'MFA_REQUIRED'
+        
+        # Normal login response (status 200)
+        body = response_data['detail']
         self.accessToken = body['access_token']
         self.refreshToken = body['refresh_token']
         self.userId = body['user_id']
         self.devRefNo = body['dev_ref_no']
         logger.info("✅ Logged in successfully.")
+        return True
+
+    # ---------------------------------------------------
+    # Verify 2FA
+    # ---------------------------------------------------
+    def verify_2fa(self, token: str, verification_code: str):
+        """
+        Verifies 2FA code and completes login.
+        """
+        payload = {
+            'token': token,
+            'verification_code': verification_code
+        }
+
+        r = self.request('POST', 'sessions/auth-verifications', None, json.dumps(payload))
+
+        if not r:
+            logger.error("❌ 2FA verification failed.")
+            return False
+
+        body = r.json()['detail']
+        self.accessToken = body['access_token']
+        self.refreshToken = body['refresh_token']
+        self.userId = body['user_id']
+        self.devRefNo = body['dev_ref_no']
+        logger.info("✅ 2FA verified successfully.")
         return True
 
     # ---------------------------------------------------
@@ -345,7 +379,20 @@ def ensure_valid_session(client: WgGesuchtClient, account: dict, supabase: Clien
     
     # Refresh failed, try full re-login
     logger.warning(f"⚠️ [{account['email']}] Token refresh failed. Re-logging in...")
-    if not client.login(account['email'], account['password']):
+    login_result = client.login(account['email'], account['password'])
+    
+    # Check if 2FA is required - auto-disable account
+    if login_result == 'MFA_REQUIRED':
+        logger.error(f"❌ [{account['email']}] 2FA required during auto-login. Auto-disabling account.")
+        config = account.get('configuration', {})
+        config['scrape_enabled'] = False
+        supabase.table('accounts').update({
+            'configuration': config
+        }).eq('id', account['id']).execute()
+        logger.error(f"🔴 [{account['email']}] Account disabled (scrape_enabled=false). Please re-login from frontend with 2FA.")
+        return False
+    
+    if not login_result:
         logger.error(f"❌ [{account['email']}] Re-login failed.")
         return False
     
