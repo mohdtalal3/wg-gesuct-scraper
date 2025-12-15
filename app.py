@@ -44,7 +44,8 @@ def get_accounts_ready_to_scrape(supabase: Client):
     """
     Fetch accounts from Supabase that are:
     1. Website = 'wg-gesucht'
-    2. Haven't been updated in the last SCRAPER_INTERVAL minutes
+    2. Scraping is enabled (scrape_enabled = true in configuration)
+    3. Haven't been updated in the last SCRAPER_INTERVAL minutes
     
     Returns list of account dictionaries.
     """
@@ -59,6 +60,14 @@ def get_accounts_ready_to_scrape(supabase: Client):
         now = datetime.now()
         
         for account in response.data:
+            # Check if scraping is enabled for this account
+            config = account.get('configuration', {})
+            scrape_enabled = config.get('scrape_enabled', False)
+            
+            if not scrape_enabled:
+                logger.info(f"⏭️  Account {account['email']} - scraping disabled (scrape_enabled=false)")
+                continue
+            
             # Check if account has been updated recently
             last_updated_str = account.get('last_updated_at')
             
